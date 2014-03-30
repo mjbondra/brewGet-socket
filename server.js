@@ -44,7 +44,6 @@ socketEmitter.on('message', function (message, context) {
   var i = connections.length;
   while (i--) if (connectionData[connections[i].id] && connectionData[connections[i].id].context && connectionData[connections[i].id].context[context] === 1) connections[i].write(message);
 });
-socketEmitter.on('session.attach', function (cid, session) {});
 socketEmitter.on('session.find', function (conn, sid) {
   if (conn && conn.id && sid && serverConnections.length > 0) serverConnections[Math.floor(Math.random() * serverConnections.length)].write(JSON.stringify({
     cid: conn.id,
@@ -52,7 +51,20 @@ socketEmitter.on('session.find', function (conn, sid) {
     sid: sid
   }));
 });
-socketEmitter.on('session.update', function (id, sid) {});
+socketEmitter.on('session.populate', function (cid, sid, user) {
+  if (!cid || !sid || !connectionData[cid]) return;
+  user = user || {};
+  connectionData[cid].sid = sid;
+  connectionData[cid].user = user;
+  console.log(connectionData);
+});
+socketEmitter.on('session.update', function (sid, user) {
+  if (!sid || !user) return;
+  var dataKeys = Object.keys(connectionData)
+    , i = dataKeys.length;
+  while (i--) if (connectionData[dataKeys[i]].sid === sid) connectionData[dataKeys[i]].user = user;
+  console.log(connectionData);
+});
 
 /**
  * Web socket server
@@ -106,6 +118,8 @@ var nodeSocketServer = net.createServer(function (socket) {
     try {
       var dataObj = JSON.parse(data);
       if (dataObj.event === 'console.log') console.log(dataObj.message);
+      else if (dataObj.event === 'session.populate') socketEmitter.emit('session.populate', dataObj.cid, dataObj.sid, dataObj.user);
+      else if (dataObj.event === 'session.update') socketEmitter.emit('session.update', dataObj.sid, dataObj.user);
     } catch (err) {}
   });
   socket.on('close', function () {
