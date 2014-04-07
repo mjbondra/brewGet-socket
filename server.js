@@ -53,7 +53,8 @@ var randomServerKey = function () {
  * Add session data to connection data
  */
 socketEmitter.on('connection.session.add', function (cid, sid, user) {
-  if (!cid || !sid || !connectionData[cid]) return;
+  if (!cid || !sid) return;
+  if (!connectionData[cid]) return socketEmitter.emit('session.connection.remove', sid, cid); // remove false connections from session
   user = user || {};
   connectionData[cid].sid = sid;
   connectionData[cid].user = user;
@@ -61,28 +62,17 @@ socketEmitter.on('connection.session.add', function (cid, sid, user) {
 });
 
 /**
- * Update session data in connection data
- */
-socketEmitter.on('connection.session.update', function (sid, user) {
-  if (!sid || !user) return;
-  var dataKeys = Object.keys(connectionData)
-    , i = dataKeys.length;
-  while (i--) if (connectionData[dataKeys[i]].sid === sid) connectionData[dataKeys[i]].user = user;
-  console.log(connectionData);
-});
-
-/**
  * Close context in connection data
  */
-socketEmitter.on('context.close', function (conn, context) {
-  if (conn && conn.id && context && connectionData[conn.id] && connectionData[conn.id].context && typeof connectionData[conn.id].context[context] !== 'undefined') connectionData[conn.id].context[context] = 0;
+socketEmitter.on('context.close', function (cid, context) {
+  if (cid && context && connectionData[cid] && connectionData[cid].context && typeof connectionData[cid].context[context] !== 'undefined') connectionData[cid].context[context] = 0;
 });
 
 /**
  * Open context in connection data
  */
-socketEmitter.on('context.open', function (conn, context) {
-  if (conn && conn.id && context && connectionData[conn.id] && connectionData[conn.id].context && typeof connectionData[conn.id].context[context] !== 'undefined') connectionData[conn.id].context[context] = 1;
+socketEmitter.on('context.open', function (cid, context) {
+  if (cid && context && connectionData[cid] && connectionData[cid].context && typeof connectionData[cid].context[context] !== 'undefined') connectionData[cid].context[context] = 1;
 });
 
 /**
@@ -92,6 +82,24 @@ socketEmitter.on('message', function (message, context) {
   if (!message || !context) return;
   var i = connections.length;
   while (i--) if (connectionData[connections[i].id] && connectionData[connections[i].id].context && connectionData[connections[i].id].context[context] === 1) connections[i].write(message);
+});
+
+/**
+ * Handle chat messages
+ */
+socketEmitter.on('message.chat', function (message) {
+  if (!message) return;
+  var i = connections.length;
+  while (i--) if (connections[i] && connections[i].id && connectionData[connections[i].id] && connectionData[connections[i].id].context && connectionData[connections[i].id].context.chat === 1) connections.write(JSON.stringify({
+    message: message
+  }));
+});
+
+/**
+ * Handle direct messages
+ */
+socketEmitter.on('message.direct', function (message) {
+
 });
 
 /**
@@ -109,17 +117,19 @@ socketEmitter.on('session.connection.add', function (cid, sid) {
 /**
  * Remove connection data from session
  */
-socketEmitter.on('session.connection.remove', function (sid) {
+socketEmitter.on('session.connection.remove', function (sid, cid) {
   if (!sid || serverConnections.length === 0) return;
   serverConnections[randomServerKey()].write(JSON.stringify({
+    cid: cid,
     event: 'session.connection.remove',
     sid: sid
   }));
 });
 
-/**
- * Web socket server
- */
+/*------------------------------------*\
+    WEB SOCKET SERVER
+\*------------------------------------*/
+
 var connections = []
   , connectionData = {};
 
@@ -128,23 +138,27 @@ webSocket.on('connection', function (conn) {
   connections.push(conn);
   connectionData[conn.id] = {
     context: {
-      chat: 0
+      alert: 0,
+      chat: 0,
+      direct: 0
     }
   };
   conn.on('data', function (data) {
     try {
       var dataObj = JSON.parse(data);
-      if (dataObj.event === 'context.open') socketEmitter.emit('context.open', conn, dataObj.context);
+      if (dataObj.event === 'context.close') socketEmitter.emit('context.close', conn.id, dataObj.context);
+      else if (dataObj.event === 'context.open') socketEmitter.emit('context.open', conn.id, dataObj.context);
       else if (dataObj.event === 'message') socketEmitter.emit('message', data, dataObj.context);
       else if (dataObj.event === 'session.connection.add') socketEmitter.emit('session.connection.add', conn.id, dataObj.sid);
     } catch (err) {}
   });
   conn.on('close', function () {
     if (conn.id && connectionData[conn.id]) {
-      socketEmitter.emit('session.connection.remove', connectionData[conn.id].sid);
+      socketEmitter.emit('session.connection.remove', connectionData[conn.id].sid, conn.id);
       delete connectionData[conn.id];
     }
-    if (connections.indexOf(conn) >= 0) connections.splice(connections.indexOf(conn), 1);
+    var connectionKey = connections.indexOf(conn);
+    if (connectionKey >= 0) connections.splice(connectionKey, 1);
   });
 });
 
@@ -157,9 +171,10 @@ webSocketServer.listen(webSocketPort, function (err) {
   console.log('Listening for web socket connections on port ' + webSocketPort);
 });
 
-/**
- * Node socket server
- */
+/*------------------------------------*\
+    NODE SOCKET SERVER
+\*------------------------------------*/
+
 var serverConnections = [];
 
 var nodeSocketServer = net.createServer(function (socket) {
@@ -173,7 +188,6 @@ var nodeSocketServer = net.createServer(function (socket) {
       var dataObj = JSON.parse(data);
       if (dataObj.event === 'console.log') console.log(dataObj.message);
       else if (dataObj.event === 'connection.session.add') socketEmitter.emit('connection.session.add', dataObj.cid, dataObj.sid, dataObj.user);
-      else if (dataObj.event === 'connection.session.update') socketEmitter.emit('connection.session.update', dataObj.sid, dataObj.user);
     } catch (err) {}
   });
   socket.on('close', function () {
